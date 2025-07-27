@@ -1,11 +1,11 @@
 langchain
-langchain_community
+langchain-community
 langchain-google-genai
 python-dotenv
 streamlit
-langchain_experimental
+langchain-experimental
 sentence-transformers
-langchain_chroma
+langchain-chroma
 langchainhub
 pypdf
 rapidocr-onnxruntime
