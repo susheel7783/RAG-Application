@@ -1,5 +1,5 @@
-langchain
-langchain-community
+langchain==0.1.0
+langchain-community==0.0.10
 langchain-google-genai
 python-dotenv
 streamlit
