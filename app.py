@@ -4,7 +4,7 @@ import time
 import os
 
 # Set your Google API key here (replace with your actual key)
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDG740XOyQw8fGt_4SULs6ue6c6g8MteRg"
+os.environ["GOOGLE_API_KEY"] = "your_actual_google_api_key_here"
 
 # Alternative PDF loader that works without langchain-community
 import PyPDF2
@@ -160,4 +160,133 @@ if not st.session_state.system_initialized:
             st.success(f"✅ RAG system initialized successfully! Processed {doc_count} document chunks.")
             
         except Exception as e:
-            st.error(
+            st.error(f"❌ Error initializing RAG system: {str(e)}")
+            st.error("Please check that:")
+            st.error("1. Your GOOGLE_API_KEY is set correctly in the code")
+            st.error("2. The yolov9_paper.pdf file exists in the app directory")
+            st.error("3. All required packages are installed")
+            st.stop()
+
+# Get components from session state
+retriever = st.session_state.retriever
+llm = st.session_state.llm
+
+# Create the prompt template
+system_prompt = (
+    "You are an assistant for question-answering tasks. "
+    "Use the following pieces of retrieved context to answer "
+    "the question. If you don't know the answer, say that you "
+    "don't know. Use three sentences maximum and keep the "
+    "answer concise."
+    "\n\n"
+    "{context}"
+)
+
+prompt_template = ChatPromptTemplate.from_messages(
+    [
+        ("system", system_prompt),
+        ("human", "{input}"),
+    ]
+)
+
+# Sidebar with information
+with st.sidebar:
+    st.header("📋 System Info")
+    if st.session_state.system_initialized:
+        st.success("System Status: ✅ Ready")
+        st.info(f"Documents processed: {st.session_state.doc_count}")
+    else:
+        st.warning("System Status: ⏳ Initializing")
+    
+    st.header("ℹ️ About")
+    st.write("This RAG application uses Google's Gemini model to answer questions about the uploaded PDF document.")
+    
+    st.write("**Features:**")
+    st.write("- PDF document processing")
+    st.write("- Vector similarity search")
+    st.write("- Conversational AI responses")
+    st.write("- Chat history")
+    
+    if st.button("🗑️ Clear All Cache"):
+        st.cache_resource.clear()
+        st.session_state.clear()
+        st.success("Cache cleared! Please refresh the page.")
+
+# Display chat messages from history on app rerun
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Chat interface
+if query := st.chat_input("Ask your question about the document..."):
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": query})
+    
+    # Display user message in chat message container
+    with st.chat_message("user"):
+        st.markdown(query)
+    
+    # Display assistant response in chat message container
+    with st.chat_message("assistant"):
+        with st.spinner("🔍 Processing your query..."):
+            try:
+                # Create the chains
+                question_answer_chain = create_stuff_documents_chain(llm, prompt_template)
+                rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+
+                # Get response with timeout
+                start_time = time.time()
+                response = rag_chain.invoke({"input": query})
+                end_time = time.time()
+                
+                # Display the answer
+                answer = response["answer"]
+                st.markdown(answer)
+                
+                # Show processing time
+                processing_time = round(end_time - start_time, 2)
+                st.caption(f"⏱️ Response generated in {processing_time} seconds")
+                
+                # Add assistant response to chat history
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": answer
+                })
+                
+                # Optional: Show retrieved context in an expander
+                with st.expander("📄 View Retrieved Context", expanded=False):
+                    for i, doc in enumerate(response.get("context", [])):
+                        st.write(f"**Chunk {i+1}:**")
+                        st.write(doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content)
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            st.caption(f"Source: {doc.metadata}")
+                        st.divider()
+                        
+            except Exception as e:
+                error_message = f"❌ Error processing query: {str(e)}"
+                st.error(error_message)
+                st.error("This might be due to:")
+                st.error("- API rate limits")
+                st.error("- Network connectivity issues")
+                st.error("- Invalid query format")
+                
+                # Add error to chat history
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": error_message
+                })
+
+# Footer with controls
+st.divider()
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("🔄 Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+
+with col2:
+    if st.button("🔄 Restart System"):
+        st.cache_resource.clear()
+        st.session_state.clear()
+        st.rerun()
