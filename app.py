@@ -6,21 +6,59 @@ import os
 # Set your Google API key here (replace with your actual key)
 os.environ["GOOGLE_API_KEY"] = "AIzaSyDG740XOyQw8fGt_4SULs6ue6c6g8MteRg"
 
-# Alternative PDF loader that works without langchain-community
-import PyPDF2
-from io import BytesIO
-from langchain.schema import Document
+# Simple manual PDF text extraction - no dependencies needed
+def extract_text_from_pdf(pdf_path):
+    """Extract text from PDF using pypdf (which you already have installed)"""
+    try:
+        import pypdf
+        documents = []
+        
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = pypdf.PdfReader(file)
+            
+            for page_num, page in enumerate(pdf_reader.pages):
+                text = page.extract_text()
+                if text.strip():  # Only add non-empty pages
+                    # Create a simple document-like object
+                    doc_content = {
+                        'page_content': text,
+                        'metadata': {'page': page_num + 1, 'source': pdf_path}
+                    }
+                    documents.append(doc_content)
+        
+        return documents
+    except Exception as e:
+        st.error(f"Error reading PDF: {str(e)}")
+        return []
+
+# Convert our simple docs to langchain Document format
+def create_langchain_documents(simple_docs):
+    """Convert simple docs to langchain Document format"""
+    from langchain.schema import Document
+    
+    langchain_docs = []
+    for doc in simple_docs:
+        langchain_doc = Document(
+            page_content=doc['page_content'],
+            metadata=doc['metadata']
+        )
+        langchain_docs.append(langchain_doc)
+    
+    return langchain_docs
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-# Import Chroma with fallback
+# Import Chroma
 try:
     from langchain_chroma import Chroma
 except ImportError:
     try:
         from langchain.vectorstores import Chroma
     except ImportError:
-        from langchain.vectorstores.chroma import Chroma
+        # Fallback to basic implementation
+        st.error("Chroma not available. Please install: pip install chromadb")
+        st.stop()
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import create_retrieval_chain
@@ -48,6 +86,7 @@ st.title("🤖 RAG Application built on Gemini Model")
 # Check for required environment variables
 if not os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") == "your_actual_google_api_key_here":
     st.error("❌ Please set your actual GOOGLE_API_KEY in the code on line 7")
+    st.info("Get your API key from: https://makersuite.google.com/app/apikey")
     st.stop()
 
 # Initialize chat history
@@ -57,30 +96,6 @@ if "messages" not in st.session_state:
 # Initialize system state
 if "system_initialized" not in st.session_state:
     st.session_state.system_initialized = False
-
-# Custom PDF loader function (replaces PyPDFLoader)
-def load_pdf_with_pypdf2(file_path):
-    """Load PDF using PyPDF2 and return Document objects"""
-    documents = []
-    
-    try:
-        with open(file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            
-            for page_num, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text.strip():  # Only add non-empty pages
-                    doc = Document(
-                        page_content=text,
-                        metadata={"page": page_num + 1, "source": file_path}
-                    )
-                    documents.append(doc)
-    
-    except Exception as e:
-        st.error(f"Error reading PDF: {str(e)}")
-        return []
-    
-    return documents
 
 # Cache the vectorstore creation to avoid recreating it on every run
 @st.cache_resource
@@ -92,11 +107,14 @@ def create_vectorstore():
         if not os.path.exists(pdf_file):
             raise FileNotFoundError(f"PDF file '{pdf_file}' not found. Please ensure it's in the same directory as app.py")
         
-        # Load PDF using our custom function
-        data = load_pdf_with_pypdf2(pdf_file)
+        # Load PDF using our simple function
+        simple_docs = extract_text_from_pdf(pdf_file)
         
-        if not data:
+        if not simple_docs:
             raise ValueError("No data loaded from PDF file")
+        
+        # Convert to langchain format
+        data = create_langchain_documents(simple_docs)
 
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -107,7 +125,7 @@ def create_vectorstore():
         if not docs:
             raise ValueError("No documents created after splitting")
 
-        # Use sync version of embeddings initialization
+        # Use embeddings
         embeddings = GoogleGenerativeAIEmbeddings(
             model="models/embedding-001",
             task_type="retrieval_document"
