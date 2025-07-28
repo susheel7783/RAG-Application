@@ -1,7 +1,6 @@
-langchain==0.1.0
-langchain-google-genai
 streamlit
+langchain-google-genai
 sentence-transformers
-chromadb
 pypdf
-langchain-core
+scikit-learn
+numpy
