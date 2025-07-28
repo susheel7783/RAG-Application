@@ -9,3 +9,10 @@ langchain-chroma
 langchainhub
 pypdf
 rapidocr-onnxruntime
+langchain==0.1.0
+langchain-google-genai
+streamlit
+sentence-transformers
+chromadb
+PyPDF2
+langchain-core
