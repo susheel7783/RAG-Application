@@ -1,14 +1,20 @@
 import streamlit as st
 import asyncio
 import time
-# Fixed import - try multiple import paths for compatibility
-try:
-    from langchain_community.document_loaders import PyPDFLoader
-except ImportError:
-    from langchain.document_loaders import PyPDFLoader
+from dotenv import load_dotenv
+import os
+
+# Load environment variables first
+load_dotenv()
+
+# The CORRECT import for your langchain-community version 0.0.10
+# This is the exact import path that works with your version
+from langchain_community.document_loaders.pdf import PyPDFLoader
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+# Import Chroma with fallback
 try:
     from langchain_chroma import Chroma
 except ImportError:
@@ -18,11 +24,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from dotenv import load_dotenv
-import os
-
-# Load environment variables
-load_dotenv()
 
 # Fix for asyncio event loop issue
 try:
@@ -103,7 +104,7 @@ def create_llm():
     """Create and cache the LLM"""
     try:
         return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",  # Changed from gemini-2.5-flash to more stable version
+            model="gemini-1.5-flash",
             temperature=0,
             max_tokens=None,
             timeout=30
@@ -119,7 +120,7 @@ if not st.session_state.system_initialized:
             vectorstore, doc_count = create_vectorstore()
             retriever = vectorstore.as_retriever(
                 search_type="similarity", 
-                search_kwargs={"k": 5}  # Reduced from 10 for better performance
+                search_kwargs={"k": 5}
             )
             llm = create_llm()
             
