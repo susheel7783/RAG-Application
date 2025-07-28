@@ -3,7 +3,6 @@ langchain-community>=0.2.0
 langchain-google-genai>=1.0.0
 python-dotenv>=1.0.0
 streamlit>=1.35.0
-langchain-experimental>=0.0.60
 sentence-transformers>=2.7.0
 chromadb>=0.5.0
 langchainhub>=0.1.15
