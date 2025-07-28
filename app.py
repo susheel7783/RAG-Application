@@ -4,7 +4,7 @@ import time
 import os
 
 # Set your Google API key here (replace with your actual key)
-os.environ["GOOGLE_API_KEY"] = "your_actual_google_api_key_here"
+os.environ["GOOGLE_API_KEY"] = "AIzaSyDG740XOyQw8fGt_4SULs6ue6c6g8MteRg"
 
 # Alternative PDF loader that works without langchain-community
 import PyPDF2
