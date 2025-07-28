@@ -1,78 +1,77 @@
 import streamlit as st
-import asyncio
 import time
 import os
 
 # Set your Google API key here (replace with your actual key)
 os.environ["GOOGLE_API_KEY"] = "AIzaSyDG740XOyQw8fGt_4SULs6ue6c6g8MteRg"
 
-# Simple manual PDF text extraction - no dependencies needed
-def extract_text_from_pdf(pdf_path):
-    """Extract text from PDF using pypdf (which you already have installed)"""
+# Simple PDF text extraction and chunking - NO LANGCHAIN DEPENDENCIES
+def extract_and_chunk_pdf(pdf_path, chunk_size=1000, overlap=200):
+    """Extract text from PDF and split into chunks"""
     try:
         import pypdf
-        documents = []
         
+        # Read PDF
         with open(pdf_path, 'rb') as file:
             pdf_reader = pypdf.PdfReader(file)
+            full_text = ""
             
-            for page_num, page in enumerate(pdf_reader.pages):
+            for page in pdf_reader.pages:
                 text = page.extract_text()
-                if text.strip():  # Only add non-empty pages
-                    # Create a simple document-like object
-                    doc_content = {
-                        'page_content': text,
-                        'metadata': {'page': page_num + 1, 'source': pdf_path}
-                    }
-                    documents.append(doc_content)
+                if text.strip():
+                    full_text += text + "\n"
         
-        return documents
+        # Simple text chunking
+        chunks = []
+        words = full_text.split()
+        
+        for i in range(0, len(words), chunk_size - overlap):
+            chunk = " ".join(words[i:i + chunk_size])
+            if chunk.strip():
+                chunks.append({
+                    'text': chunk,
+                    'metadata': {'chunk_id': len(chunks), 'source': pdf_path}
+                })
+        
+        return chunks
     except Exception as e:
         st.error(f"Error reading PDF: {str(e)}")
         return []
 
-# Convert our simple docs to langchain Document format
-def create_langchain_documents(simple_docs):
-    """Convert simple docs to langchain Document format"""
-    from langchain.schema import Document
-    
-    langchain_docs = []
-    for doc in simple_docs:
-        langchain_doc = Document(
-            page_content=doc['page_content'],
-            metadata=doc['metadata']
-        )
-        langchain_docs.append(langchain_doc)
-    
-    return langchain_docs
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-# Import Chroma
-try:
-    from langchain_chroma import Chroma
-except ImportError:
+# Simple vector search using sentence transformers
+def create_embeddings(texts):
+    """Create embeddings for texts"""
     try:
-        from langchain.vectorstores import Chroma
-    except ImportError:
-        # Fallback to basic implementation
-        st.error("Chroma not available. Please install: pip install chromadb")
-        st.stop()
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        embeddings = model.encode([chunk['text'] for chunk in texts])
+        return embeddings, model
+    except Exception as e:
+        st.error(f"Error creating embeddings: {str(e)}")
+        return None, None
+
+def find_relevant_chunks(query, chunks, embeddings_model, embeddings, top_k=5):
+    """Find relevant chunks for a query"""
+    try:
+        import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        # Get query embedding
+        query_embedding = embeddings_model.encode([query])
+        
+        # Calculate similarities
+        similarities = cosine_similarity(query_embedding, embeddings)[0]
+        
+        # Get top k indices
+        top_indices = np.argsort(similarities)[-top_k:][::-1]
+        
+        relevant_chunks = [chunks[i]['text'] for i in top_indices]
+        return relevant_chunks
+    except Exception as e:
+        st.error(f"Error finding relevant chunks: {str(e)}")
+        return []
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-
-# Fix for asyncio event loop issue
-try:
-    loop = asyncio.get_event_loop()
-    if loop.is_closed():
-        raise RuntimeError("Event loop is closed")
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
 
 # Page configuration
 st.set_page_config(
@@ -97,85 +96,57 @@ if "messages" not in st.session_state:
 if "system_initialized" not in st.session_state:
     st.session_state.system_initialized = False
 
-# Cache the vectorstore creation to avoid recreating it on every run
+# Cache the system initialization
 @st.cache_resource
-def create_vectorstore():
-    """Create and cache the vectorstore"""
+def initialize_system():
+    """Initialize the RAG system"""
     try:
         # Check if PDF file exists
         pdf_file = "yolov9_paper.pdf"
         if not os.path.exists(pdf_file):
             raise FileNotFoundError(f"PDF file '{pdf_file}' not found. Please ensure it's in the same directory as app.py")
         
-        # Load PDF using our simple function
-        simple_docs = extract_text_from_pdf(pdf_file)
+        # Extract and chunk PDF
+        chunks = extract_and_chunk_pdf(pdf_file)
         
-        if not simple_docs:
-            raise ValueError("No data loaded from PDF file")
+        if not chunks:
+            raise ValueError("No chunks created from PDF file")
         
-        # Convert to langchain format
-        data = create_langchain_documents(simple_docs)
-
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
-        docs = text_splitter.split_documents(data)
+        # Create embeddings
+        embeddings, embeddings_model = create_embeddings(chunks)
         
-        if not docs:
-            raise ValueError("No documents created after splitting")
-
-        # Use embeddings
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            task_type="retrieval_document"
-        )
+        if embeddings is None:
+            raise ValueError("Failed to create embeddings")
         
-        vectorstore = Chroma.from_documents(
-            documents=docs, 
-            embedding=embeddings
-        )
-        
-        return vectorstore, len(docs)
-        
-    except Exception as e:
-        st.error(f"Error creating vectorstore: {str(e)}")
-        raise e
-
-# Cache the LLM initialization
-@st.cache_resource
-def create_llm():
-    """Create and cache the LLM"""
-    try:
-        return ChatGoogleGenerativeAI(
+        # Initialize LLM
+        llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
             temperature=0,
             max_tokens=None,
             timeout=30
         )
+        
+        return chunks, embeddings, embeddings_model, llm, len(chunks)
+        
     except Exception as e:
-        st.error(f"Error creating LLM: {str(e)}")
+        st.error(f"Error initializing system: {str(e)}")
         raise e
 
-# Initialize components with better error handling
+# Initialize components
 if not st.session_state.system_initialized:
     with st.spinner("🔄 Initializing RAG system... This may take a moment."):
         try:
-            vectorstore, doc_count = create_vectorstore()
-            retriever = vectorstore.as_retriever(
-                search_type="similarity", 
-                search_kwargs={"k": 5}
-            )
-            llm = create_llm()
+            chunks, embeddings, embeddings_model, llm, chunk_count = initialize_system()
             
-            # Store in session state for reuse
-            st.session_state.vectorstore = vectorstore
-            st.session_state.retriever = retriever
+            # Store in session state
+            st.session_state.chunks = chunks
+            st.session_state.embeddings = embeddings
+            st.session_state.embeddings_model = embeddings_model
             st.session_state.llm = llm
-            st.session_state.doc_count = doc_count
+            st.session_state.chunk_count = chunk_count
             st.session_state.system_initialized = True
             
-            st.success(f"✅ RAG system initialized successfully! Processed {doc_count} document chunks.")
+            st.success(f"✅ RAG system initialized successfully! Processed {chunk_count} document chunks.")
             
         except Exception as e:
             st.error(f"❌ Error initializing RAG system: {str(e)}")
@@ -186,33 +157,17 @@ if not st.session_state.system_initialized:
             st.stop()
 
 # Get components from session state
-retriever = st.session_state.retriever
+chunks = st.session_state.chunks
+embeddings = st.session_state.embeddings
+embeddings_model = st.session_state.embeddings_model
 llm = st.session_state.llm
-
-# Create the prompt template
-system_prompt = (
-    "You are an assistant for question-answering tasks. "
-    "Use the following pieces of retrieved context to answer "
-    "the question. If you don't know the answer, say that you "
-    "don't know. Use three sentences maximum and keep the "
-    "answer concise."
-    "\n\n"
-    "{context}"
-)
-
-prompt_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]
-)
 
 # Sidebar with information
 with st.sidebar:
     st.header("📋 System Info")
     if st.session_state.system_initialized:
         st.success("System Status: ✅ Ready")
-        st.info(f"Documents processed: {st.session_state.doc_count}")
+        st.info(f"Documents processed: {st.session_state.chunk_count}")
     else:
         st.warning("System Status: ⏳ Initializing")
     
@@ -230,7 +185,7 @@ with st.sidebar:
         st.session_state.clear()
         st.success("Cache cleared! Please refresh the page.")
 
-# Display chat messages from history on app rerun
+# Display chat messages from history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -240,25 +195,44 @@ if query := st.chat_input("Ask your question about the document..."):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": query})
     
-    # Display user message in chat message container
+    # Display user message
     with st.chat_message("user"):
         st.markdown(query)
     
-    # Display assistant response in chat message container
+    # Display assistant response
     with st.chat_message("assistant"):
         with st.spinner("🔍 Processing your query..."):
             try:
-                # Create the chains
-                question_answer_chain = create_stuff_documents_chain(llm, prompt_template)
-                rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-
-                # Get response with timeout
                 start_time = time.time()
-                response = rag_chain.invoke({"input": query})
+                
+                # Find relevant chunks
+                relevant_chunks = find_relevant_chunks(
+                    query, chunks, embeddings_model, embeddings, top_k=5
+                )
+                
+                if not relevant_chunks:
+                    answer = "I couldn't find relevant information to answer your question."
+                else:
+                    # Create context from relevant chunks
+                    context = "\n\n".join(relevant_chunks)
+                    
+                    # Create prompt
+                    prompt = f"""You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, say that you don't know. Use three sentences maximum and keep the answer concise.
+
+Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+                    
+                    # Get response from LLM
+                    response = llm.invoke(prompt)
+                    answer = response.content if hasattr(response, 'content') else str(response)
+                
                 end_time = time.time()
                 
                 # Display the answer
-                answer = response["answer"]
                 st.markdown(answer)
                 
                 # Show processing time
@@ -271,14 +245,13 @@ if query := st.chat_input("Ask your question about the document..."):
                     "content": answer
                 })
                 
-                # Optional: Show retrieved context in an expander
-                with st.expander("📄 View Retrieved Context", expanded=False):
-                    for i, doc in enumerate(response.get("context", [])):
-                        st.write(f"**Chunk {i+1}:**")
-                        st.write(doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content)
-                        if hasattr(doc, 'metadata') and doc.metadata:
-                            st.caption(f"Source: {doc.metadata}")
-                        st.divider()
+                # Optional: Show retrieved context
+                if relevant_chunks:
+                    with st.expander("📄 View Retrieved Context", expanded=False):
+                        for i, chunk in enumerate(relevant_chunks):
+                            st.write(f"**Chunk {i+1}:**")
+                            st.write(chunk[:300] + "..." if len(chunk) > 300 else chunk)
+                            st.divider()
                         
             except Exception as e:
                 error_message = f"❌ Error processing query: {str(e)}"
