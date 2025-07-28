@@ -1,11 +1,11 @@
 import streamlit as st
 import asyncio
 import time
-from dotenv import load_dotenv
 import os
 
-# Load environment variables first
-load_dotenv()
+# Note: Set your GOOGLE_API_KEY as a Streamlit secret or environment variable
+# For local development, you can set it directly here (not recommended for production):
+# os.environ["GOOGLE_API_KEY"] = "your_api_key_here"
 
 # The CORRECT import for your langchain-community version 0.0.10
 # This is the exact import path that works with your version
